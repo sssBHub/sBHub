@@ -1,3 +1,5 @@
+local RunService = game:GetService("RunService")
+
 RunService.RenderStepped:Connect(function()
     frameCounter += 1
 
