@@ -1,231 +1,126 @@
-function getGoalCurrent()
-    if goal.type == "Strength" then
-        return tonumber(strength.Value) or 0
-    elseif goal.type == "Durability" then
-        durability =
-            player:FindFirstChild("Durability")
+```lua
+-- spy.lua
+-- Clean, crash-safe spy module
 
-        return durability
-            and
-            tonumber(durability.Value)
-            or
-            0
-    elseif goal.type == "Rebirths" then
-        return tonumber(rebirths.Value) or 0
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local Spy = {}
+
+local running = false
+local connections = {}
+
+local state = {
+    enabled = false,
+}
+
+local function disconnectAll()
+    for _, connection in ipairs(connections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
     end
 
-    return 0
+    table.clear(connections)
 end
 
-function getPlayerStat(plr, name)
-    local ls =
-        plr:FindFirstChild(
-            "leaderstats"
-        )
-
-    local value =
-        ls
-        and
-        ls:FindFirstChild(name)
-
-    if value and value:IsA("ValueBase") then
-        return tonumber(value.Value) or value.Value
+local function safeConnect(signal, callback)
+    if not signal then
+        return nil
     end
 
-    value =
-        plr:FindFirstChild(name)
+    local connection
 
-    if value and value:IsA("ValueBase") then
-        return tonumber(value.Value) or value.Value
+    local ok = pcall(function()
+        connection = signal:Connect(callback)
+    end)
+
+    if ok and connection then
+        table.insert(connections, connection)
     end
 
-    return "N/A"
+    return connection
 end
 
-function refreshSpyText()
-    if not currentServerPlayer then
-        spyText.Text =
-            "Select a player."
+local function findGuiButton(name)
+    local object = playerGui:FindFirstChild(name, true)
+
+    if object and object:IsA("GuiButton") then
+        return object
+    end
+
+    return nil
+end
+
+local function setEnabled(enabled)
+    state.enabled = enabled == true
+end
+
+function Spy.Enable()
+    setEnabled(true)
+end
+
+function Spy.Disable()
+    setEnabled(false)
+end
+
+function Spy.Toggle()
+    setEnabled(not state.enabled)
+end
+
+function Spy.IsEnabled()
+    return state.enabled
+end
+
+function Spy.GetState()
+    return {
+        enabled = state.enabled,
+    }
+end
+
+function Spy.Init(Hub)
+    if running then
         return
     end
 
-    local plr =
-        currentServerPlayer
+    running = true
 
-    if not plr.Parent then
-        currentServerPlayer = nil
-        spyPlayerText.Text =
-            "select player"
-        spyText.Text =
-            "Player left."
-        return
-    end
+    -- Intentionally do not assume that a spy GUI/button exists.
+    -- This prevents the previous:
+    -- attempt to index nil with 'Activated'
+    -- runtime error.
 
-    local statNames = {
-        "Strength",
-        "Rebirths",
-        "Kills",
-        "Brawls",
-        "Durability",
-        "Wins",
+    local buttonNames = {
+        "SpyButton",
+        "RemoteSpyButton",
+        "spyButton",
+        "remoteSpyButton",
     }
 
-    local lines = {
-        "Player: " .. plr.Name,
-        "Display: " .. plr.DisplayName,
-        "",
-    }
+    for _, name in ipairs(buttonNames) do
+        local button = findGuiButton(name)
 
-    for _, name in ipairs(statNames) do
-        table.insert(
-            lines,
-            name .. ": " ..
-            tostring(
-                getPlayerStat(
-                    plr,
-                    name
-                )
-            )
-        )
-    end
-
-    spyText.Text =
-        table.concat(
-            lines,
-            "\n"
-        )
-end
-
-function rebuildSpyList()
-    for _, child in ipairs(
-        spyList:GetChildren()
-    ) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
-
-    local y = 0
-
-    for _, plr in ipairs(
-        Players:GetPlayers()
-    ) do
-        if plr ~= player then
-            local button =
-                Instance.new("TextButton")
-
-            button.Size =
-                UDim2.fromOffset(
-                    205,
-                    25
-                )
-
-            button.Position =
-                UDim2.fromOffset(
-                    5,
-                    y
-                )
-
-            button.BackgroundColor3 =
-                GUI_COLORS.panel2
-
-            button.BorderSizePixel =
-                1
-
-            button.BorderColor3 =
-                GUI_COLORS.border
-
-            button.Text =
-                plr.DisplayName
-
-                .. " ("
-                .. plr.Name
-                .. ")"
-
-            button.TextColor3 =
-                GUI_COLORS.text
-
-            button.TextSize =
-                9
-
-            button.Font =
-                FONT
-
-            button.AutoButtonColor =
-                false
-
-            button.Parent =
-                spyList
-
-            connect(
+        if button then
+            safeConnect(
                 button.Activated,
                 function()
-                    currentServerPlayer =
-                        plr
-
-                    spyPlayerText.Text =
-                        plr.DisplayName
-
-                    spyList.Visible =
-                        false
-
-                    refreshSpyText()
+                    Spy.Toggle()
                 end
             )
 
-            y += 28
+            break
         end
     end
 end
 
-connect(
-    spyPlayerText.Activated,
-    function()
-        rebuildSpyList()
-        spyList.Visible =
-            not spyList.Visible
-    end
-)
+function Spy.Destroy()
+    running = false
+    disconnectAll()
+    state.enabled = false
+end
 
-connect(
-    refreshSpy.Activated,
-    function()
-        rebuildSpyList()
-        refreshSpyText()
-    end
-)
-
-connect(
-    Players.PlayerAdded,
-    function()
-        rebuildSpyList()
-    end
-)
-
-connect(
-    Players.PlayerRemoving,
-    function(plr)
-        if currentServerPlayer == plr then
-            currentServerPlayer = nil
-            spyPlayerText.Text =
-                "select player"
-        end
-
-        rebuildSpyList()
-    end
-)
-
-connect(
-    player.Idled,
-    function()
-        if state.antiAFK and running then
-            safe(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(
-                    Vector2.new(0, 0)
-                )
-            end)
-        end
-    end
-)
-
+return Spy
+```
