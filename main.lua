@@ -1,5 +1,5 @@
-local BASE_URL =
-    "https://raw.githubusercontent.com/sssBHub/sBHub/main/"
+```lua
+local BASE_URL = "https://raw.githubusercontent.com/sssBHub/sBHub/main/"
 
 local function loadModule(fileName)
     local url = BASE_URL .. fileName .. ".lua"
@@ -9,78 +9,32 @@ local function loadModule(fileName)
     end)
 
     if not ok then
-        error(
-            "[sB Hub] Download failed: "
-            .. fileName
-            .. "\n"
-            .. tostring(source)
-        )
+        error("[sB Hub] Download failed: " .. fileName .. " HTTP request failed: " .. tostring(source))
     end
 
-    local chunk, compileError =
-        loadstring(source)
+    local chunk, compileError = loadstring(source)
 
     if not chunk then
-        error(
-            "[sB Hub] Compile failed: "
-            .. fileName
-            .. "\n"
-            .. tostring(compileError)
-        )
+        error("[sB Hub] Compile failed: " .. fileName .. "\n" .. tostring(compileError))
     end
 
-    local success, result =
-        pcall(chunk)
+    local success, result = pcall(chunk)
 
     if not success then
-        error(
-            "[sB Hub] Runtime error: "
-            .. fileName
-            .. "\n"
-            .. tostring(result)
-        )
+        error("[sB Hub] Runtime error: " .. fileName .. "\n" .. tostring(result))
     end
 
     return result
 end
 
-local Hub = {
-    Config = loadModule("config"),
-    UI = loadModule("ui"),
-    Automation = loadModule("automation"),
-    ESP = loadModule("esp"),
-    Notifications = loadModule("notifications"),
-    Overlays = loadModule("overlays"),
-    Stats = loadModule("stats"),
-    Spy = loadModule("spy"),
-}
+local Hub = {}
 
-if Hub.UI.Init then
+Hub.Config = loadModule("config")
+Hub.UI = loadModule("ui")
+
+if Hub.UI and Hub.UI.Init then
     Hub.UI.Init(Hub)
 end
 
-if Hub.Automation.Init then
-    Hub.Automation.Init(Hub)
-end
-
-if Hub.ESP.Init then
-    Hub.ESP.Init(Hub)
-end
-
-if Hub.Notifications.Init then
-    Hub.Notifications.Init(Hub)
-end
-
-if Hub.Overlays.Init then
-    Hub.Overlays.Init(Hub)
-end
-
-if Hub.Stats.Init then
-    Hub.Stats.Init(Hub)
-end
-
-if Hub.Spy.Init then
-    Hub.Spy.Init(Hub)
-end
-
-print("[sB Hub] Loaded")
+print("[sB Hub] UI test build loaded successfully")
+```
