@@ -121,4 +121,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-connect(
+        coordsOverlay.Visible = false
+    end
+end)
