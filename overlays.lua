@@ -120,7 +120,3 @@ RunService.RenderStepped:Connect(function()
             false
     end
 end)
-
-        coordsOverlay.Visible = false
-    end
-end)
