@@ -1,5 +1,5 @@
 local BASE_URL =
-    "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/"
+    "https://raw.githubusercontent.com/sssBHub/sBHub/main/"
 
 local function loadModule(fileName)
     local url = BASE_URL .. fileName .. ".lua"
