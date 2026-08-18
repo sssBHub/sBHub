@@ -1,579 +1,233 @@
-function refreshCharacter()
-    backpack = player:WaitForChild("Backpack")
+-- notifications.lua
+-- Clean modular notification service for sB Hub.
+-- No dependency on notification-page UI objects from the old monolithic script.
+-- Safe to load even when the main UI has not created any controls yet.
 
-    character =
-        player.Character or
-        player.CharacterAdded:Wait()
+local Notifications = {}
 
-    humanoid =
-        character:WaitForChild("Humanoid", 10)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-    root =
-        character:WaitForChild("HumanoidRootPart", 10)
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
-    gems = player:FindFirstChild("Gems")
-    durability = player:FindFirstChild("Durability")
+local Hub
 
-    gameGui = playerGui:FindFirstChild("gameGui")
-    rebirthButton = nil
+local enabled = true
+local petNotifications = true
+local auraNotifications = true
+local rarityNotifications = true
 
-    if gameGui then
-        local menu = gameGui:FindFirstChild("rebirthMenu")
+local rarityEnabled = {
+    Basic = false,
+    Rare = false,
+    Epic = true,
+    Unique = true,
+    Advanced = true,
+}
 
-        if menu then
-            rebirthButton =
-                menu:FindFirstChild("confirmButton")
-        end
-    end
+local selectedPets = {}
+local selectedAuras = {}
 
-    return character and humanoid and root
-end
+local notificationFeed = {}
+local activeToasts = {}
 
-function getJungleRock()
-    local folder =
-        workspace:FindFirstChild("machinesFolder")
+local petReferenceSnapshot = {}
+local auraReferenceSnapshot = {}
 
-    if not folder then
-        return nil, nil
-    end
+local pendingCrystalWindow = 0
+local crystalStats = {
+    total = 0,
+    selectedPetHits = 0,
+    selectedAuraHits = 0,
+    rarityHits = 0,
+}
 
-    local machine =
-        folder:FindFirstChild("Ancient Jungle Rock")
+local connections = {}
+local overlayGui
 
-    if not machine then
-        return nil, nil
-    end
-
-    local rock =
-        machine:FindFirstChild("Rock", true)
-
-    if not rock or not rock:IsA("BasePart") then
-        return nil, nil
-    end
-
-    return machine, rock
-end
-
-function jungleTarget()
-    if not character or not character.Parent then
+local function connect(signal, callback)
+    if not signal or typeof(callback) ~= "function" then
         return nil
     end
 
-    local machine, rock = getJungleRock()
+    local ok, connection = pcall(function()
+        return signal:Connect(callback)
+    end)
 
-    if not machine or not rock then
-        return nil
-    end
-
-    local desired =
-        rock.Position +
-        Vector3.new(0, 0, 100)
-
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {
-        character,
-        machine,
-    }
-
-    local result =
-        workspace:Raycast(
-            Vector3.new(desired.X, 300, desired.Z),
-            Vector3.new(0, -600, 0),
-            params
-        )
-
-    if not result then
-        return nil
-    end
-
-    local p =
-        result.Position +
-        Vector3.new(0, 3, 0)
-
-    return CFrame.lookAt(
-        p,
-        Vector3.new(
-            rock.Position.X,
-            p.Y,
-            rock.Position.Z
-        )
-    )
-end
-
-function createJungleBillboard()
-    if jungleBillboard then
-        return
-    end
-
-    local _, rock = getJungleRock()
-
-    if not rock then
-        return
-    end
-
-    jungleBillboard =
-        Instance.new("BillboardGui")
-
-    jungleBillboard.Name =
-        "sB_AutoRockStatus"
-
-    jungleBillboard.Size =
-        UDim2.fromOffset(190, 52)
-
-    jungleBillboard.StudsOffset =
-        Vector3.new(
-            0,
-            rock.Size.Y / 2 + 4,
-            0
-        )
-
-    jungleBillboard.AlwaysOnTop = true
-    jungleBillboard.Enabled = false
-    jungleBillboard.Parent = rock
-
-    local frame = Instance.new("Frame")
-    frame.Name = "Background"
-    frame.Size = UDim2.fromScale(1, 1)
-    frame.BackgroundColor3 = GUI_COLORS.panel
-    frame.BackgroundTransparency = 0.1
-    frame.BorderSizePixel = 1
-    frame.BorderColor3 = GUI_COLORS.border
-    frame.Parent = jungleBillboard
-
-    local label = Instance.new("TextLabel")
-    label.Name = "Text"
-    label.Size = UDim2.fromScale(1, 1)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = GUI_COLORS.text
-    label.TextSize = 12
-    label.Font = FONT
-    label.TextWrapped = true
-    label.Parent = frame
-end
-
-function updateJungleBillboard(text, active)
-    createJungleBillboard()
-
-    if not jungleBillboard then
-        return
-    end
-
-    jungleBillboard.Enabled = active
-
-    local background =
-        jungleBillboard:FindFirstChild("Background")
-
-    local label =
-        background and
-        background:FindFirstChild("Text")
-
-    if label then
-        label.Text = tostring(text or "")
-        label.TextColor3 =
-            active
-            and GUI_COLORS.blue
-            or GUI_COLORS.muted
-    end
-end
-
-function getPunch()
-    if not character or not character.Parent then
-        return nil
-    end
-
-    local punch =
-        character:FindFirstChild("Punch")
-
-    if punch and punch:IsA("Tool") then
-        return punch
-    end
-
-    punch =
-        backpack:FindFirstChild("Punch")
-
-    if punch and punch:IsA("Tool") then
-        return punch
+    if ok and connection then
+        table.insert(connections, connection)
+        return connection
     end
 
     return nil
 end
 
-function findExercise()
-    if not character or not character.Parent then
-        return nil
-    end
-
-    local choices = {}
-
-    local function scan(container)
-        for _, tool in ipairs(container:GetChildren()) do
-            if not tool:IsA("Tool") then
-                continue
-            end
-
-            local gain =
-                tool:FindFirstChild("strengthGain")
-
-            local repTime =
-                tool:FindFirstChild("repTime")
-
-            if not gain
-                or not repTime
-                or not gain:IsA("ValueBase")
-                or not repTime:IsA("ValueBase") then
-                continue
-            end
-
-            local requirement =
-                tool:FindFirstChild("requiredAmount")
-
-            local req = 0
-
-            if requirement and requirement:IsA("ValueBase") then
-                req = tonumber(requirement.Value) or 0
-            end
-
-            if strength.Value >= req then
-                table.insert(
-                    choices,
-                    {
-                        tool = tool,
-                        gain = tonumber(gain.Value) or 0,
-                        requirement = req,
-                        repTime =
-                            math.max(
-                                tonumber(repTime.Value) or 0.35,
-                                0.01
-                            ),
-                    }
-                )
-            end
-        end
-    end
-
-    scan(backpack)
-    scan(character)
-
-    table.sort(
-        choices,
-        function(a, b)
-            if a.requirement ~= b.requirement then
-                return a.requirement > b.requirement
-            end
-
-            return a.gain > b.gain
-        end
-    )
-
-    return choices[1]
-end
-
-function getRebirthRequirement()
-    if not GlobalFunctions then
-        return nil
-    end
-
-    local fn =
-        GlobalFunctions.calculateRequiredRebirthStrength
-
-    if typeof(fn) ~= "function" then
-        return nil
-    end
-
-    local ok, result =
-        pcall(
-            fn,
-            rebirths.Value,
-            player
-        )
-
-    if ok and type(result) == "number" then
-        return result
-    end
-
-    return nil
-end
-
-function getNextRebirthGems()
-    if not GlobalFunctions then
-        return nil
-    end
-
-    local fn =
-        GlobalFunctions.calculateNextRebirthGems
-
-    if typeof(fn) ~= "function" then
-        return nil
-    end
-
-    local ok, result =
-        pcall(
-            fn,
-            rebirths.Value
-        )
-
-    if ok and type(result) == "number" then
-        return result
-    end
-
-    return nil
-end
-
-function stopRebirthSequence()
-    local controller =
-        ReplicatedStorage
-            :FindFirstChild("client")
-            and
-            ReplicatedStorage.client:FindFirstChild(
-                "controllers"
-            )
-            and
-            ReplicatedStorage.client.controllers:FindFirstChild(
-                "RebirthController"
-            )
-
-    if not controller
-        or not controller:IsA("ModuleScript") then
-        return
-    end
-
-    local ok, module =
-        pcall(require, controller)
-
-    if not ok or type(module) ~= "table" then
-        return
-    end
-
-    if type(module.StopCameraSequence) == "function" then
+local function disconnectAll()
+    for _, connection in ipairs(connections) do
         pcall(function()
-            module.StopCameraSequence(module)
-        end)
-
-        pcall(function()
-            module.StopCameraSequence()
+            connection:Disconnect()
         end)
     end
+
+    table.clear(connections)
 end
 
-function setSettingValue(name, value)
-    local menu =
-        gameGui
-        and
-        gameGui:FindFirstChild("settingsMenu")
+local function safeCall(fn, ...)
+    if typeof(fn) ~= "function" then
+        return false
+    end
 
-    local frame =
-        menu
-        and
-        menu:FindFirstChild(
-            "settingsFrame",
-            true
-        )
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        warn("[sB Hub] Notifications callback error:", err)
+    end
 
-    if not frame then
+    return ok
+end
+
+local function findGameGui()
+    return playerGui:FindFirstChild("gameGui")
+end
+
+local function ensureOverlay()
+    if overlayGui and overlayGui.Parent then
+        return overlayGui
+    end
+
+    local old = playerGui:FindFirstChild("sB_NotificationOverlay")
+    if old then
+        pcall(function()
+            old:Destroy()
+        end)
+    end
+
+    overlayGui = Instance.new("ScreenGui")
+    overlayGui.Name = "sB_NotificationOverlay"
+    overlayGui.ResetOnSpawn = false
+    overlayGui.IgnoreGuiInset = true
+    overlayGui.DisplayOrder = 100001
+    overlayGui.Parent = playerGui
+
+    return overlayGui
+end
+
+local function getColor(name)
+    if name == "yellow" then
+        return Color3.fromRGB(255, 215, 80)
+    elseif name == "red" then
+        return Color3.fromRGB(255, 90, 90)
+    elseif name == "green" then
+        return Color3.fromRGB(90, 220, 130)
+    elseif name == "blue" then
+        return Color3.fromRGB(90, 170, 255)
+    end
+
+    return Color3.fromRGB(90, 170, 255)
+end
+
+local function addHistory(text)
+    table.insert(notificationFeed, 1, {
+        time = os.date("%H:%M:%S"),
+        text = tostring(text),
+    })
+
+    while #notificationFeed > 50 do
+        table.remove(notificationFeed)
+    end
+end
+
+local function repositionToasts()
+    for index, toast in ipairs(activeToasts) do
+        if toast and toast.Parent then
+            toast.Position = UDim2.new(
+                1,
+                -290,
+                0,
+                20 + ((index - 1) * 75)
+            )
+        end
+    end
+end
+
+local function notify(titleText, bodyText, colorName)
+    if not enabled then
         return
     end
 
-    local target =
-        frame:FindFirstChild(
-            name,
-            true
-        )
+    titleText = tostring(titleText or "Notification")
+    bodyText = tostring(bodyText or "")
 
-    if not target then
-        return
-    end
+    local overlay = ensureOverlay()
 
-    local amount =
-        target:FindFirstChild(
-            "amountBox",
-            true
-        )
+    local toast = Instance.new("Frame")
+    toast.Name = "Notification"
+    toast.Size = UDim2.fromOffset(270, 65)
+    toast.BackgroundTransparency = 0.08
+    toast.BorderSizePixel = 0
+    toast.ZIndex = 10000
+    toast.Parent = overlay
 
-    if amount and amount:IsA("TextBox") then
-        amount.Text = tostring(value)
-    end
-end
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 7)
+    corner.Parent = toast
 
-function applySize()
-    local menu =
-        gameGui
-        and
-        gameGui:FindFirstChild("settingsMenu")
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Transparency = 0.35
+    stroke.Parent = toast
 
-    if not menu then
-        return
-    end
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Position = UDim2.fromOffset(8, 5)
+    titleLabel.Size = UDim2.new(1, -16, 0, 20)
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Text = titleText
+    titleLabel.TextSize = 12
+    titleLabel.TextColor3 = getColor(colorName)
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.ZIndex = 10001
+    titleLabel.Parent = toast
 
-    if state.sizeMode == "Max" then
-        local button =
-            menu:FindFirstChild(
-                "maxSizeButton",
-                true
-            )
+    local bodyLabel = Instance.new("TextLabel")
+    bodyLabel.BackgroundTransparency = 1
+    bodyLabel.Position = UDim2.fromOffset(8, 26)
+    bodyLabel.Size = UDim2.new(1, -16, 1, -31)
+    bodyLabel.Font = Enum.Font.Gotham
+    bodyLabel.Text = bodyText
+    bodyLabel.TextSize = 10
+    bodyLabel.TextColor3 = Color3.fromRGB(235, 235, 235)
+    bodyLabel.TextWrapped = true
+    bodyLabel.TextXAlignment = Enum.TextXAlignment.Left
+    bodyLabel.TextYAlignment = Enum.TextYAlignment.Top
+    bodyLabel.ZIndex = 10001
+    bodyLabel.Parent = toast
 
-        if button and button:IsA("GuiButton") then
-            fire(button.Activated)
-        end
-    else
-        setSettingValue(
-            "sizeSetting",
-            state.sizeCustom
-        )
-    end
-end
+    table.insert(activeToasts, toast)
+    addHistory(titleText .. " - " .. bodyText)
+    repositionToasts()
 
-function applySpeed()
-    local menu =
-        gameGui
-        and
-        gameGui:FindFirstChild("settingsMenu")
+    task.delay(4, function()
+        pcall(function()
+            toast:Destroy()
+        end)
 
-    if not menu then
-        return
-    end
-
-    if state.speedMode == "Max" then
-        local button =
-            menu:FindFirstChild(
-                "maxSpeedButton",
-                true
-            )
-
-        if button and button:IsA("GuiButton") then
-            fire(button.Activated)
-        end
-    else
-        setSettingValue(
-            "speedSetting",
-            state.speedCustom
-        )
-    end
-end
-
-function scanPetPool()
-    local names = {}
-
-    local runtime =
-        ReplicatedStorage
-            :FindFirstChild("shared")
-            and
-            ReplicatedStorage.shared:FindFirstChild(
-                "runtime"
-            )
-
-    local petFolder =
-        runtime
-        and
-        runtime:FindFirstChild(
-            "cPetShopFolder"
-        )
-
-    if petFolder then
-        for _, obj in ipairs(
-            petFolder:GetChildren()
-        ) do
-            if obj.Name ~= "" then
-                names[obj.Name] = true
+        for i, item in ipairs(activeToasts) do
+            if item == toast then
+                table.remove(activeToasts, i)
+                break
             end
         end
-    end
 
-    local pets =
-        player:FindFirstChild(
-            "petsFolder"
-        )
-
-    if pets then
-        for _, rarity in ipairs(
-            pets:GetChildren()
-        ) do
-            for _, pet in ipairs(
-                rarity:GetChildren()
-            ) do
-                names[pet.Name] = true
-            end
-        end
-    end
-
-    local list = {}
-
-    for name in pairs(names) do
-        table.insert(list, name)
-    end
-
-    table.sort(list)
-
-    return list
+        repositionToasts()
+    end)
 end
 
-function scanAuraPool()
-    local names = {}
+local function selectedContains(list, name)
+    name = tostring(name)
 
-    local pets =
-        player:FindFirstChild(
-            "powerUpsFolder"
-        )
-
-    if pets then
-        for _, rarity in ipairs(
-            pets:GetChildren()
-        ) do
-            for _, aura in ipairs(
-                rarity:GetChildren()
-            ) do
-                names[aura.Name] = true
-            end
-        end
-    end
-
-    if gameGui then
-        local boosts =
-            gameGui:FindFirstChild(
-                "itemsMenu"
-            )
-
-        boosts =
-            boosts
-            and
-            boosts:FindFirstChild(
-                "boostsFrames"
-            )
-
-        if boosts then
-            for _, obj in ipairs(
-                boosts:GetDescendants()
-            ) do
-
-                local label =
-                    obj:FindFirstChild(
-                        "nameLabel"
-                    )
-
-                if label
-                    and label:IsA("TextLabel")
-                    and label.Text ~= "" then
-
-                    names[label.Text] = true
-                end
-            end
-        end
-    end
-
-    local list = {}
-
-    for name in pairs(names) do
-        table.insert(list, name)
-    end
-
-    table.sort(list)
-
-    return list
-end
-
-function selectedContains(list, name)
     for _, item in ipairs(list) do
-        if item == name then
+        if tostring(item) == name then
             return true
         end
     end
@@ -581,49 +235,89 @@ function selectedContains(list, name)
     return false
 end
 
-function rarityEnabled(rarity)
-    rarity = string.lower(tostring(rarity or ""))
+local function rarityIsEnabled(rarity)
+    rarity = tostring(rarity or "")
 
-    if rarity == "basic" then
-        return state.rareBasic
-    elseif rarity == "rare" then
-        return state.rareRare
-    elseif rarity == "epic" then
-        return state.rareEpic
-    elseif rarity == "unique" then
-        return state.rareUnique
-    elseif rarity == "advanced" then
-        return state.rareAdvanced
+    for key, value in pairs(rarityEnabled) do
+        if string.lower(key) == string.lower(rarity) then
+            return value == true
+        end
     end
 
     return false
 end
 
-function announcePet(pet)
-    if not pet then
+local function getPetCardSnapshot()
+    local result = {}
+    local gameGui = findGameGui()
+
+    if not gameGui then
+        return result
+    end
+
+    local items = gameGui:FindFirstChild("itemsMenu")
+    local frames = items and items:FindFirstChild("petsFrames")
+
+    if not frames then
+        return result
+    end
+
+    for _, obj in ipairs(frames:GetDescendants()) do
+        if obj:IsA("ObjectValue") and obj.Name == "petReference" then
+            local value = obj.Value
+
+            if value then
+                result[value:GetFullName()] = value
+            end
+        end
+    end
+
+    return result
+end
+
+local function getAuraSnapshot()
+    local result = {}
+    local gameGui = findGameGui()
+
+    if not gameGui then
+        return result
+    end
+
+    local items = gameGui:FindFirstChild("itemsMenu")
+    local frames = items and items:FindFirstChild("boostsFrames")
+
+    if not frames then
+        return result
+    end
+
+    for _, obj in ipairs(frames:GetDescendants()) do
+        if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+            local ref =
+                obj:FindFirstChild("boostReference", true)
+                or obj:FindFirstChild("itemReference", true)
+                or obj:FindFirstChild("auraReference", true)
+
+            if ref and ref:IsA("ObjectValue") and ref.Value then
+                result[ref.Value:GetFullName()] = ref.Value
+            end
+        end
+    end
+
+    return result
+end
+
+local function announcePet(pet)
+    if not pet or not petNotifications then
         return
     end
 
-    local name =
-        tostring(pet.Name)
-
+    local name = tostring(pet.Name)
     local rarity =
-        pet.Parent
-        and
-        tostring(pet.Parent.Name)
-        or
-        "Unknown"
+        pet.Parent and tostring(pet.Parent.Name)
+        or "Unknown"
 
-    local selected =
-        selectedContains(
-            selectedPets,
-            name
-        )
-
-    local rare =
-        state.rarityNotifications
-        and
-        rarityEnabled(rarity)
+    local selected = selectedContains(selectedPets, name)
+    local rare = rarityNotifications and rarityIsEnabled(rarity)
 
     if not selected and not rare then
         return
@@ -637,32 +331,23 @@ function announcePet(pet)
         crystalStats.rarityHits += 1
     end
 
-    local color =
-        rare
-        and GUI_COLORS.yellow
-        or GUI_COLORS.blue
-
     notify(
         "NEW PET",
         name .. " • " .. rarity,
-        color
+        rare and "yellow" or "blue"
     )
 end
 
-function announceAura(name, rarity)
+local function announceAura(name, rarity)
+    if not auraNotifications then
+        return
+    end
+
     name = tostring(name or "")
     rarity = tostring(rarity or "Unknown")
 
-    local selected =
-        selectedContains(
-            selectedAuras,
-            name
-        )
-
-    local rare =
-        state.rarityNotifications
-        and
-        rarityEnabled(rarity)
+    local selected = selectedContains(selectedAuras, name)
+    local rare = rarityNotifications and rarityIsEnabled(rarity)
 
     if not selected and not rare then
         return
@@ -679,145 +364,33 @@ function announceAura(name, rarity)
     notify(
         "NEW AURA",
         name .. " • " .. rarity,
-        rare and GUI_COLORS.yellow or GUI_COLORS.blue
+        rare and "yellow" or "blue"
     )
 end
 
-function getPetCardSnapshot()
-    local result = {}
-
-    if not gameGui then
-        return result
-    end
-
-    local items =
-        gameGui:FindFirstChild(
-            "itemsMenu"
-        )
-
-    local frames =
-        items
-        and
-        items:FindFirstChild(
-            "petsFrames"
-        )
-
-    if not frames then
-        return result
-    end
-
-    for _, obj in ipairs(
-        frames:GetDescendants()
-    ) do
-        if obj:IsA("ObjectValue")
-            and obj.Name == "petReference" then
-
-            local value = obj.Value
-
-            if value then
-                result[
-                    value:GetFullName()
-                ] = value
-            end
-        end
-    end
-
-    return result
-end
-
-function getAuraSnapshot()
-    local result = {}
-
-    if not gameGui then
-        return result
-    end
-
-    local items =
-        gameGui:FindFirstChild(
-            "itemsMenu"
-        )
-
-    local frames =
-        items
-        and
-        items:FindFirstChild(
-            "boostsFrames"
-        )
-
-    if not frames then
-        return result
-    end
-
-    for _, button in ipairs(
-        frames:GetDescendants()
-    ) do
-        if button:IsA("TextButton")
-            or button:IsA("ImageButton") then
-
-            local ref =
-                button:FindFirstChild(
-                    "boostReference",
-                    true
-                )
-                or
-                button:FindFirstChild(
-                    "itemReference",
-                    true
-                )
-                or
-                button:FindFirstChild(
-                    "auraReference",
-                    true
-                )
-
-            if ref
-                and ref:IsA("ObjectValue")
-                and ref.Value then
-
-                result[
-                    ref.Value:GetFullName()
-                ] =
-                    ref.Value
-            end
-        end
-    end
-
-    return result
-end
-
-function refreshNotificationSources()
-    local newPets =
-        getPetCardSnapshot()
+local function refreshNotificationSources()
+    local newPets = getPetCardSnapshot()
 
     if next(petReferenceSnapshot) ~= nil then
         for path, pet in pairs(newPets) do
-            if not petReferenceSnapshot[path] then
-                if pendingCrystalWindow > 0 then
-                    announcePet(pet)
-                end
+            if not petReferenceSnapshot[path] and pendingCrystalWindow > 0 then
+                announcePet(pet)
             end
         end
     end
 
     petReferenceSnapshot = newPets
 
-    local newAuras =
-        getAuraSnapshot()
+    local newAuras = getAuraSnapshot()
 
     if next(auraReferenceSnapshot) ~= nil then
         for path, aura in pairs(newAuras) do
-            if not auraReferenceSnapshot[path] then
-                if pendingCrystalWindow > 0 then
-                    local rarity =
-                        aura.Parent
-                        and aura.Parent.Name
-                        or "Unknown"
+            if not auraReferenceSnapshot[path] and pendingCrystalWindow > 0 then
+                local rarity =
+                    aura.Parent and aura.Parent.Name
+                    or "Unknown"
 
-                    announceAura(
-                        aura.Name,
-                        rarity
-                    )
-                end
+                announceAura(aura.Name, rarity)
             end
         end
     end
@@ -825,106 +398,232 @@ function refreshNotificationSources()
     auraReferenceSnapshot = newAuras
 end
 
-function updateHistory()
-    local lines = {}
+local function scanPetPool()
+    local names = {}
 
-    for i = 1, math.min(#notificationFeed, 18) do
-        local event = notificationFeed[i]
-        table.insert(
-            lines,
-            "["
-            .. event.time
-            .. "] "
-            .. event.text
-        )
-    end
+    local pets = player:FindFirstChild("petsFolder")
 
-    historyText.Text =
-        #lines > 0
-        and table.concat(lines, "\n")
-        or
-        "No notifications yet."
-end
-
-function updatePetSelectionText()
-    local list = {}
-
-    for i = 1, math.min(#selectedPets, 5) do
-        table.insert(list, selectedPets[i])
-    end
-
-    if #selectedPets > 5 then
-        table.insert(
-            list,
-            "+" .. tostring(#selectedPets - 5) .. " more"
-        )
-    end
-
-    petSelectionText.Text =
-        "Selected pets:\n"
-        ..
-        (
-            #list > 0
-            and table.concat(list, "\n")
-            or "None"
-        )
-end
-
-connect(
-    refreshPetListButton.Activated,
-    function()
-        local pets = scanPetPool()
-
-        if #pets == 0 then
-            notify(
-                "PET LIST",
-                "No pet definitions found.",
-                GUI_COLORS.red
-            )
-            return
+    if pets then
+        for _, rarity in ipairs(pets:GetChildren()) do
+            for _, pet in ipairs(rarity:GetChildren()) do
+                if pet.Name ~= "" then
+                    names[pet.Name] = true
+                end
+            end
         end
+    end
 
-        selectedPets = {
-            pets[1]
+    local result = {}
+
+    for name in pairs(names) do
+        table.insert(result, name)
+    end
+
+    table.sort(result)
+    return result
+end
+
+local function scanAuraPool()
+    local names = {}
+
+    local powerUps = player:FindFirstChild("powerUpsFolder")
+
+    if powerUps then
+        for _, rarity in ipairs(powerUps:GetChildren()) do
+            for _, aura in ipairs(rarity:GetChildren()) do
+                if aura.Name ~= "" then
+                    names[aura.Name] = true
+                end
+            end
+        end
+    end
+
+    local gameGui = findGameGui()
+
+    if gameGui then
+        local items = gameGui:FindFirstChild("itemsMenu")
+        local boosts = items and items:FindFirstChild("boostsFrames")
+
+        if boosts then
+            for _, obj in ipairs(boosts:GetDescendants()) do
+                local label = obj:FindFirstChild("nameLabel")
+
+                if label and label:IsA("TextLabel") and label.Text ~= "" then
+                    names[label.Text] = true
+                end
+            end
+        end
+    end
+
+    local result = {}
+
+    for name in pairs(names) do
+        table.insert(result, name)
+    end
+
+    table.sort(result)
+    return result
+end
+
+local function startMonitor()
+    table.insert(
+        connections,
+        task.spawn(function()
+            while true do
+                if not enabled then
+                    task.wait(1)
+                else
+                    if pendingCrystalWindow > 0 then
+                        pendingCrystalWindow -= 0.5
+                    end
+
+                    refreshNotificationSources()
+                    task.wait(0.5)
+                end
+            end
+        end)
+    )
+end
+
+function Notifications.Init(hub)
+    Hub = hub
+
+    disconnectAll()
+
+    enabled = true
+    petNotifications = true
+    auraNotifications = true
+    rarityNotifications = true
+
+    -- Take a baseline first. This prevents the existing inventory from
+    -- generating a wall of "new pet" notifications on startup.
+    petReferenceSnapshot = getPetCardSnapshot()
+    auraReferenceSnapshot = getAuraSnapshot()
+
+    startMonitor()
+
+    print("[sB Hub] Notifications initialized")
+end
+
+function Notifications.Enable()
+    enabled = true
+end
+
+function Notifications.Disable()
+    enabled = false
+end
+
+function Notifications.SetPetNotifications(value)
+    petNotifications = value == true
+end
+
+function Notifications.SetAuraNotifications(value)
+    auraNotifications = value == true
+end
+
+function Notifications.SetRarityNotifications(value)
+    rarityNotifications = value == true
+end
+
+function Notifications.SetRarity(rarity, value)
+    rarityEnabled[tostring(rarity)] = value == true
+end
+
+function Notifications.SetSelectedPets(list)
+    selectedPets = {}
+
+    if type(list) == "table" then
+        for _, name in ipairs(list) do
+            table.insert(selectedPets, tostring(name))
+        end
+    end
+end
+
+function Notifications.SetSelectedAuras(list)
+    selectedAuras = {}
+
+    if type(list) == "table" then
+        for _, name in ipairs(list) do
+            table.insert(selectedAuras, tostring(name))
+        end
+    end
+end
+
+function Notifications.Refresh()
+    local pets = scanPetPool()
+    local auras = scanAuraPool()
+
+    Notifications.SetSelectedPets(pets)
+    Notifications.SetSelectedAuras(auras)
+
+    return {
+        pets = pets,
+        auras = auras,
+    }
+end
+
+function Notifications.Notify(titleText, bodyText, colorName)
+    notify(titleText, bodyText, colorName)
+end
+
+function Notifications.OpenCrystalWindow(seconds)
+    pendingCrystalWindow = math.max(
+        pendingCrystalWindow,
+        tonumber(seconds) or 5
+    )
+
+    crystalStats.total += 1
+end
+
+function Notifications.GetHistory()
+    local result = {}
+
+    for i, event in ipairs(notificationFeed) do
+        result[i] = {
+            time = event.time,
+            text = event.text,
         }
-
-        saveConfig()
-        updatePetSelectionText()
-
-        notify(
-            "PET LIST",
-            "Loaded " .. tostring(#pets) .. " pets.",
-            GUI_COLORS.blue
-        )
     end
-)
 
-goalTypes = {
-    "Strength",
-    "Durability",
-    "Rebirths",
-}
+    return result
+end
 
-connect(
-    goalType.Activated,
-    function()
-        local current =
-            table.find(
-                goalTypes,
-                goal.type
-            )
-            or 1
+function Notifications.GetCrystalStats()
+    return {
+        total = crystalStats.total,
+        selectedPetHits = crystalStats.selectedPetHits,
+        selectedAuraHits = crystalStats.selectedAuraHits,
+        rarityHits = crystalStats.rarityHits,
+    }
+end
 
-        current =
-            current % #goalTypes + 1
+function Notifications.GetState()
+    return {
+        enabled = enabled,
+        petNotifications = petNotifications,
+        auraNotifications = auraNotifications,
+        rarityNotifications = rarityNotifications,
+        rarityEnabled = table.clone(rarityEnabled),
+        selectedPets = table.clone(selectedPets),
+        selectedAuras = table.clone(selectedAuras),
+    }
+end
 
-        goal.type =
-            goalTypes[current]
+function Notifications.Rebuild()
+    Notifications.Init(Hub)
+end
 
-        goalType.Text =
-            goal.type
+function Notifications.Unload()
+    disconnectAll()
 
-        saveConfig()
+    if overlayGui then
+        pcall(function()
+            overlayGui:Destroy()
+        end)
     end
-)
 
+    overlayGui = nil
+    table.clear(activeToasts)
+end
+
+return Notifications
