@@ -1,1241 +1,516 @@
-function makeGroup(parent, name, x, y, width, height)
-    local group = Instance.new("Frame")
-    group.Size = UDim2.fromOffset(width, height)
-    group.Position = UDim2.fromOffset(x, y)
-    group.BackgroundColor3 = GUI_COLORS.group
-    group.BorderSizePixel = 1
-    group.BorderColor3 = GUI_COLORS.border
-    group.ZIndex = 1002
-    group.Parent = parent
+-- ui.lua
+-- sB Hub UI
+-- Standalone UI module for the modular loader
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -12, 0, 22)
-    label.Position = UDim2.fromOffset(6, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = GUI_COLORS.muted
-    label.TextSize = 11
-    label.Font = FONT
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.ZIndex = 1003
-    label.Parent = group
+local UI = {}
 
-    return group
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Hub
+local gui
+local main
+local sidebar
+local content
+local title
+local tabs = {}
+local pages = {}
+local activeTab
+
+local connections = {}
+
+local function disconnectAll()
+    for _, connection in ipairs(connections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+
+    table.clear(connections)
 end
 
-function makeToggle(parent, text, x, y, getter, setter, width)
-    width = width or 220
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
+end
 
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.fromOffset(width, 27)
-    button.Position = UDim2.fromOffset(x, y)
-    button.BackgroundTransparency = 1
-    button.BorderSizePixel = 0
-    button.Text = ""
-    button.AutoButtonColor = false
-    button.ZIndex = 1003
-    button.Parent = parent
+local function create(className, properties, parent)
+    local object = Instance.new(className)
 
-    local box = Instance.new("Frame")
-    box.Size = UDim2.fromOffset(12, 12)
-    box.Position = UDim2.fromOffset(5, 7)
-    box.BackgroundColor3 = GUI_COLORS.off
-    box.BorderSizePixel = 1
-    box.BorderColor3 = GUI_COLORS.border
-    box.ZIndex = 1004
-    box.Parent = button
+    for property, value in pairs(properties or {}) do
+        pcall(function()
+            object[property] = value
+        end)
+    end
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -25, 1, 0)
-    label.Position = UDim2.fromOffset(23, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = GUI_COLORS.text
-    label.TextSize = 11
-    label.Font = FONT
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.ZIndex = 1004
-    label.Parent = button
+    object.Parent = parent
 
-    local function render()
-        local enabled = getter()
+    return object
+end
 
-        box.BackgroundColor3 =
-            enabled and GUI_COLORS.blue or GUI_COLORS.off
+local function addCorner(object, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius or 6)
+    corner.Parent = object
+    return corner
+end
 
-        box.BorderColor3 =
-            enabled and GUI_COLORS.blue or GUI_COLORS.border
+local function addStroke(object)
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Transparency = 0.5
+    stroke.Parent = object
+    return stroke
+end
+
+local function clearContent()
+    for _, child in ipairs(content:GetChildren()) do
+        if not child:IsA("UIListLayout") and
+           not child:IsA("UIPadding") then
+            child:Destroy()
+        end
+    end
+end
+
+local function makePage(name)
+    local page = create("ScrollingFrame", {
+        Name = name .. "Page",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 4,
+        Visible = false
+    }, content)
+
+    create("UIPadding", {
+        PaddingTop = UDim.new(0, 12),
+        PaddingBottom = UDim.new(0, 12),
+        PaddingLeft = UDim.new(0, 12),
+        PaddingRight = UDim.new(0, 12)
+    }, page)
+
+    create("UIListLayout", {
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder
+    }, page)
+
+    pages[name] = page
+
+    return page
+end
+
+local function makeSection(parent, text)
+    local label = create("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 28),
+        Font = Enum.Font.GothamBold,
+        Text = text,
+        TextSize = 15,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, parent)
+
+    return label
+end
+
+local function makeButton(parent, text, callback)
+    local button = create("TextButton", {
+        BackgroundTransparency = 0.15,
+        Size = UDim2.new(1, 0, 0, 36),
+        AutoButtonColor = true,
+        Font = Enum.Font.Gotham,
+        Text = text,
+        TextSize = 13
+    }, parent)
+
+    addCorner(button, 6)
+    addStroke(button)
+
+    if callback then
+        connect(button.Activated, function()
+            local success, err = pcall(callback)
+
+            if not success then
+                warn("[sB Hub] Button error:", err)
+            end
+        end)
+    end
+
+    return button
+end
+
+local function makeToggle(parent, text, default, callback)
+    local state = default == true
+
+    local button = create("TextButton", {
+        BackgroundTransparency = 0.15,
+        Size = UDim2.new(1, 0, 0, 38),
+        AutoButtonColor = true,
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, parent)
+
+    addCorner(button, 6)
+    addStroke(button)
+
+    local label = create("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 0),
+        Size = UDim2.new(1, -70, 1, 0),
+        Font = Enum.Font.Gotham,
+        Text = text,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, button)
+
+    local stateLabel = create("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(1, -55, 0, 0),
+        Size = UDim2.new(0, 45, 1, 0),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12
+    }, button)
+
+    local function update()
+        stateLabel.Text = state and "ON" or "OFF"
     end
 
     connect(button.Activated, function()
-        setter(not getter())
-        render()
-        saveConfig()
+        state = not state
+        update()
+
+        if callback then
+            local success, err = pcall(callback, state)
+
+            if not success then
+                warn("[sB Hub] Toggle error:", err)
+            end
+        end
     end)
 
-    render()
+    update()
 
-    return button
-end
-
-function makeInput(parent, labelText, x, y, width, value, callback)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.fromOffset(width, 17)
-    label.Position = UDim2.fromOffset(x, y)
-    label.BackgroundTransparency = 1
-    label.Text = labelText
-    label.TextColor3 = GUI_COLORS.muted
-    label.TextSize = 9
-    label.Font = FONT
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.ZIndex = 1004
-    label.Parent = parent
-
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.fromOffset(width, 23)
-    box.Position = UDim2.fromOffset(x, y + 16)
-    box.BackgroundColor3 = GUI_COLORS.panel2
-    box.BorderSizePixel = 1
-    box.BorderColor3 = GUI_COLORS.border
-    box.Text = tostring(value)
-    box.TextColor3 = GUI_COLORS.text
-    box.TextSize = 10
-    box.Font = FONT
-    box.ClearTextOnFocus = false
-    box.ZIndex = 1004
-    box.Parent = parent
-
-    connect(box.FocusLost, function()
-        callback(box.Text)
-        saveConfig()
-    end)
-
-    return box
-end
-
-function makeStat(parent, text, y)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.fromOffset(210, 23)
-    label.Position = UDim2.fromOffset(10, y)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = GUI_COLORS.muted
-    label.TextSize = 10
-    label.Font = FONT
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.ZIndex = 1004
-    label.Parent = parent
-
-    local value = Instance.new("TextLabel")
-    value.Size = UDim2.fromOffset(220, 23)
-    value.Position = UDim2.fromOffset(245, y)
-    value.BackgroundTransparency = 1
-    value.Text = "..."
-    value.TextColor3 = GUI_COLORS.text
-    value.TextSize = 10
-    value.Font = FONT
-    value.TextXAlignment = Enum.TextXAlignment.Right
-    value.ZIndex = 1004
-    value.Parent = parent
-
-    return value
-end
-
-function makeModeButton(parent, x, y)
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.fromOffset(80, 23)
-    button.Position = UDim2.fromOffset(x, y)
-    button.BackgroundColor3 = GUI_COLORS.panel2
-    button.BorderSizePixel = 1
-    button.BorderColor3 = GUI_COLORS.border
-    button.TextColor3 = GUI_COLORS.text
-    button.TextSize = 9
-    button.Font = FONT
-    button.AutoButtonColor = false
-    button.ZIndex = 1004
-    button.Parent = parent
-    return button
-end
-
-function showTab(name)
-    for pageName, page in pairs(pages) do
-        page.Visible = pageName == name
-    end
-
-    for tabName, button in pairs(tabs) do
-        local selected = tabName == name
-
-        button.BackgroundColor3 =
-            selected and GUI_COLORS.panel2 or GUI_COLORS.panel
-
-        button.TextColor3 =
-            selected and GUI_COLORS.text or GUI_COLORS.muted
-
-        local line = button:FindFirstChild("TopLine")
-        if line then
-            line.Visible = selected
-        end
-
-        local shadow = button:FindFirstChild("Shadow")
-        if shadow and shadow:IsA("UIStroke") then
-            shadow.Enabled = selected
-        end
+    return button, function()
+        return state
     end
 end
 
-function addEvent(text)
-    table.insert(notificationFeed, 1, {
-        time = os.date("%H:%M:%S"),
-        text = tostring(text),
-    })
-
-    while #notificationFeed > 30 do
-        table.remove(notificationFeed)
-    end
-end
-
-function notify(titleText, bodyText, color)
-    if not state.notifications then
+local function showTab(name)
+    if not pages[name] then
         return
     end
 
-    local toast = Instance.new("Frame")
-    toast.Size = UDim2.fromOffset(260, 66)
-    toast.Position = UDim2.new(1, -280, 0, 20 + (#notifications * 75))
-    toast.BackgroundColor3 = GUI_COLORS.panel
-    toast.BorderSizePixel = 1
-    toast.BorderColor3 = color or GUI_COLORS.blue
-    toast.ZIndex = 10000
-    toast.Parent = overlayGui
+    activeTab = name
 
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -12, 0, 21)
-    titleLabel.Position = UDim2.fromOffset(6, 4)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = tostring(titleText)
-    titleLabel.TextColor3 = color or GUI_COLORS.blue
-    titleLabel.TextSize = 12
-    titleLabel.Font = FONT
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.ZIndex = 10001
-    titleLabel.Parent = toast
+    for tabName, page in pairs(pages) do
+        page.Visible = tabName == name
+    end
 
-    local bodyLabel = Instance.new("TextLabel")
-    bodyLabel.Size = UDim2.new(1, -12, 1, -27)
-    bodyLabel.Position = UDim2.fromOffset(6, 25)
-    bodyLabel.BackgroundTransparency = 1
-    bodyLabel.Text = tostring(bodyText)
-    bodyLabel.TextColor3 = GUI_COLORS.text
-    bodyLabel.TextSize = 10
-    bodyLabel.Font = FONT
-    bodyLabel.TextWrapped = true
-    bodyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    bodyLabel.TextYAlignment = Enum.TextYAlignment.Top
-    bodyLabel.ZIndex = 10001
-    bodyLabel.Parent = toast
-
-    table.insert(notifications, toast)
-    addEvent(tostring(titleText) .. " - " .. tostring(bodyText))
-
-    task.delay(4, function()
-        pcall(function()
-            toast:Destroy()
-        end)
-
-        for i, item in ipairs(notifications) do
-            if item == toast then
-                table.remove(notifications, i)
-                break
-            end
+    for tabName, button in pairs(tabs) do
+        if tabName == name then
+            button.BackgroundTransparency = 0
+        else
+            button.BackgroundTransparency = 0.35
         end
+    end
 
-        for i, item in ipairs(notifications) do
-            if item and item.Parent then
-                item.Position =
-                    UDim2.new(
-                        1,
-                        -280,
-                        0,
-                        20 + ((i - 1) * 75)
-                    )
-            end
-        end
-    end)
+    if title then
+        title.Text = "sB Hub  •  " .. name
+    end
 end
 
-for name, button in pairs(tabs) do
+local function addTab(name)
+    if tabs[name] then
+        return tabs[name]
+    end
+
+    local button = create("TextButton", {
+        Name = name .. "Tab",
+        BackgroundTransparency = 0.35,
+        Size = UDim2.new(1, -10, 0, 36),
+        AutoButtonColor = true,
+        Font = Enum.Font.GothamSemibold,
+        Text = name,
+        TextSize = 13
+    }, sidebar)
+
+    addCorner(button, 6)
+
+    tabs[name] = button
+
+    local page = makePage(name)
+
     connect(button.Activated, function()
         showTab(name)
     end)
+
+    return button, page
 end
 
-mainPage = pages.main
+local function createBase()
+    disconnectAll()
 
-progressGroup = makeGroup(
-    mainPage,
-    "rebirth progress",
-    10,
-    10,
-    470,
-    90
-)
+    local old = LocalPlayer.PlayerGui:FindFirstChild("sB_Hub_v1")
 
-progressText = Instance.new("TextLabel")
-progressText.Size = UDim2.fromOffset(450, 20)
-progressText.Position = UDim2.fromOffset(10, 23)
-progressText.BackgroundTransparency = 1
-progressText.Text = "Waiting for rebirth data..."
-progressText.TextColor3 = GUI_COLORS.text
-progressText.TextSize = 11
-progressText.Font = FONT
-progressText.TextXAlignment = Enum.TextXAlignment.Left
-progressText.Parent = progressGroup
-
-progressBar = Instance.new("Frame")
-progressBar.Size = UDim2.fromOffset(280, 12)
-progressBar.Position = UDim2.fromOffset(10, 50)
-progressBar.BackgroundColor3 = GUI_COLORS.off
-progressBar.BorderSizePixel = 0
-progressBar.Parent = progressGroup
-
-progressFill = Instance.new("Frame")
-progressFill.Size = UDim2.new(0, 0, 1, 0)
-progressFill.BackgroundColor3 = GUI_COLORS.blue
-progressFill.BorderSizePixel = 0
-progressFill.Parent = progressBar
-
-progressPercent = Instance.new("TextLabel")
-progressPercent.Size = UDim2.fromOffset(90, 18)
-progressPercent.Position = UDim2.fromOffset(300, 47)
-progressPercent.BackgroundTransparency = 1
-progressPercent.Text = "0.0%"
-progressPercent.TextColor3 = GUI_COLORS.muted
-progressPercent.TextSize = 10
-progressPercent.Font = FONT
-progressPercent.Parent = progressGroup
-
-mainLeft = makeGroup(
-    mainPage,
-    "automation",
-    10,
-    110,
-    230,
-    255
-)
-
-makeToggle(mainLeft, "auto train", 8, 28,
-    function() return state.autoTrain end,
-    function(v) state.autoTrain = v end)
-
-makeToggle(mainLeft, "auto rebirth", 8, 55,
-    function() return state.autoRebirth end,
-    function(v) state.autoRebirth = v end)
-
-makeToggle(mainLeft, "rebirth limit", 8, 82,
-    function() return state.rebirthLimit end,
-    function(v) state.rebirthLimit = v end)
-
-makeToggle(mainLeft, "skip rebirth animation", 8, 109,
-    function() return state.skipRebirthAnimation end,
-    function(v) state.skipRebirthAnimation = v end)
-
-makeInput(
-    mainLeft,
-    "target rebirth",
-    8,
-    145,
-    105,
-    state.rebirthTarget,
-    function(value)
-        local n = tonumber(value)
-        if n then
-            state.rebirthTarget = math.max(0, math.floor(n))
-        end
+    if old then
+        old:Destroy()
     end
-)
 
-activityText = Instance.new("TextLabel")
-activityText.Size = UDim2.fromOffset(205, 75)
-activityText.Position = UDim2.fromOffset(8, 194)
-activityText.BackgroundTransparency = 1
-activityText.Text = "Loading..."
-activityText.TextColor3 = GUI_COLORS.muted
-activityText.TextSize = 9
-activityText.Font = FONT
-activityText.TextXAlignment = Enum.TextXAlignment.Left
-activityText.TextYAlignment = Enum.TextYAlignment.Top
-activityText.Parent = mainLeft
+    gui = create("ScreenGui", {
+        Name = "sB_Hub_v1",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    }, LocalPlayer.PlayerGui)
 
-mainRight = makeGroup(
-    mainPage,
-    "what am i doing?",
-    250,
-    110,
-    230,
-    255
-)
+    main = create("Frame", {
+        Name = "Frame",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.new(0, 720, 0, 460),
+        BackgroundTransparency = 0.05,
+        Active = true
+    }, gui)
 
-currentActivity = Instance.new("TextLabel")
-currentActivity.Size = UDim2.fromOffset(210, 205)
-currentActivity.Position = UDim2.fromOffset(8, 28)
-currentActivity.BackgroundTransparency = 1
-currentActivity.Text = "Loading..."
-currentActivity.TextColor3 = GUI_COLORS.muted
-currentActivity.TextSize = 10
-currentActivity.Font = FONT
-currentActivity.TextXAlignment = Enum.TextXAlignment.Left
-currentActivity.TextYAlignment = Enum.TextYAlignment.Top
-currentActivity.TextWrapped = true
-currentActivity.Parent = mainRight
+    addCorner(main, 10)
+    addStroke(main)
 
-automationPage = pages.automation
+    title = create("TextLabel", {
+        Name = "Title",
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 18, 0, 8),
+        Size = UDim2.new(1, -60, 0, 36),
+        Font = Enum.Font.GothamBold,
+        Text = "sB Hub",
+        TextSize = 18,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, main)
 
-automationGroup = makeGroup(
-    automationPage,
-    "automation",
-    10,
-    10,
-    230,
-    190
-)
+    local close = create("TextButton", {
+        Name = "Close",
+        BackgroundTransparency = 1,
+        Position = UDim2.new(1, -42, 0, 8),
+        Size = UDim2.new(0, 32, 0, 32),
+        Font = Enum.Font.GothamBold,
+        Text = "×",
+        TextSize = 22
+    }, main)
 
-makeToggle(
-    automationGroup,
-    "auto jungle rock",
-    8,
-    28,
-    function() return state.autoJungleRock end,
-    function(v) state.autoJungleRock = v end
-)
+    connect(close.Activated, function()
+        gui.Enabled = false
+    end)
 
-makeToggle(
-    automationGroup,
-    "auto egg",
-    8,
-    55,
-    function() return state.autoEgg end,
-    function(v) state.autoEgg = v end
-)
+    sidebar = create("Frame", {
+        Name = "Tabs",
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 10, 0, 52),
+        Size = UDim2.new(0, 150, 1, -62)
+    }, main)
 
-makeToggle(
-    automationGroup,
-    "auto ultimates",
-    8,
-    82,
-    function() return state.autoUltimates end,
-    function(v) state.autoUltimates = v end
-)
+    create("UIListLayout", {
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder
+    }, sidebar)
 
-makeToggle(
-    automationGroup,
-    "auto size",
-    8,
-    109,
-    function() return state.autoSize end,
-    function(v) state.autoSize = v end
-)
+    content = create("Frame", {
+        Name = "Content",
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 170, 0, 52),
+        Size = UDim2.new(1, -180, 1, -62)
+    }, main)
 
-makeToggle(
-    automationGroup,
-    "auto speed",
-    8,
-    136,
-    function() return state.autoSpeed end,
-    function(v) state.autoSpeed = v end
-)
+    -- Dragging
+    local dragging = false
+    local dragStart
+    local startPosition
 
-sizeSpeedGroup = makeGroup(
-    automationPage,
-    "size / speed",
-    250,
-    10,
-    230,
-    245
-)
+    connect(main.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPosition = main.Position
 
-sizeMode = makeModeButton(sizeSpeedGroup, 90, 28)
-sizeMode.Text = state.sizeMode == "Max" and "MAX" or "CUSTOM"
+            local releaseConnection
+            releaseConnection = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
 
-sizeModeLabel = Instance.new("TextLabel")
-sizeModeLabel.Size = UDim2.fromOffset(78, 22)
-sizeModeLabel.Position = UDim2.fromOffset(8, 29)
-sizeModeLabel.BackgroundTransparency = 1
-sizeModeLabel.Text = "size mode"
-sizeModeLabel.TextColor3 = GUI_COLORS.muted
-sizeModeLabel.TextSize = 9
-sizeModeLabel.Font = FONT
-sizeModeLabel.Parent = sizeSpeedGroup
-
-sizeCustom = makeInput(
-    sizeSpeedGroup,
-    "custom size",
-    8,
-    65,
-    110,
-    state.sizeCustom,
-    function(value)
-        local n = tonumber(value)
-        if n then
-            state.sizeCustom = n
+                    if releaseConnection then
+                        releaseConnection:Disconnect()
+                    end
+                end
+            end)
         end
-    end
-)
+    end)
 
-speedMode = makeModeButton(sizeSpeedGroup, 90, 114)
-speedMode.Text = state.speedMode == "Max" and "MAX" or "CUSTOM"
-
-speedModeLabel = Instance.new("TextLabel")
-speedModeLabel.Size = UDim2.fromOffset(78, 22)
-speedModeLabel.Position = UDim2.fromOffset(8, 115)
-speedModeLabel.BackgroundTransparency = 1
-speedModeLabel.Text = "speed mode"
-speedModeLabel.TextColor3 = GUI_COLORS.muted
-speedModeLabel.TextSize = 9
-speedModeLabel.Font = FONT
-speedModeLabel.Parent = sizeSpeedGroup
-
-speedCustom = makeInput(
-    sizeSpeedGroup,
-    "custom speed",
-    8,
-    151,
-    110,
-    state.speedCustom,
-    function(value)
-        local n = tonumber(value)
-        if n then
-            state.speedCustom = n
+    connect(UserInputService.InputChanged, function(input)
+        if not dragging then
+            return
         end
-    end
-)
 
-recoveryText = Instance.new("TextLabel")
-recoveryText.Size = UDim2.fromOffset(210, 58)
-recoveryText.Position = UDim2.fromOffset(8, 200)
-recoveryText.BackgroundTransparency = 1
-recoveryText.Text =
-    "Respawn recovery: ON\n" ..
-    "Rock recovery: ON\n" ..
-    "Tool reacquire: ON"
-recoveryText.TextColor3 = GUI_COLORS.muted
-recoveryText.TextSize = 9
-recoveryText.Font = FONT
-recoveryText.Parent = sizeSpeedGroup
-
-connect(sizeMode.Activated, function()
-    state.sizeMode =
-        state.sizeMode == "Max"
-        and "Custom"
-        or "Max"
-
-    sizeMode.Text =
-        state.sizeMode == "Max"
-        and "MAX"
-        or "CUSTOM"
-
-    saveConfig()
-end)
-
-connect(speedMode.Activated, function()
-    state.speedMode =
-        state.speedMode == "Max"
-        and "Custom"
-        or "Max"
-
-    speedMode.Text =
-        state.speedMode == "Max"
-        and "MAX"
-        or "CUSTOM"
-
-    saveConfig()
-end)
-
-statsPage = pages.stats
-
-statsGroup = makeGroup(
-    statsPage,
-    "session",
-    10,
-    10,
-    470,
-    405
-)
-
-sessionValue = makeStat(statsGroup, "session", 28)
-strengthStartValue = makeStat(statsGroup, "strength start", 52)
-strengthCurrentValue = makeStat(statsGroup, "strength", 76)
-strengthGainValue = makeStat(statsGroup, "strength gained", 100)
-strengthHourValue = makeStat(statsGroup, "strength / hour", 124)
-rebirthStartValue = makeStat(statsGroup, "rebirth start", 148)
-rebirthCurrentValue = makeStat(statsGroup, "rebirths", 172)
-rebirthGainValue = makeStat(statsGroup, "rebirths gained", 196)
-rebirthHourValue = makeStat(statsGroup, "rebirths / hour", 220)
-gemsValue = makeStat(statsGroup, "gems", 244)
-durabilityValue = makeStat(statsGroup, "durability", 268)
-durabilityHourValue = makeStat(statsGroup, "durability / hour", 292)
-exerciseValue = makeStat(statsGroup, "exercise", 316)
-rockValue = makeStat(statsGroup, "jungle rock", 340)
-fpsValue = makeStat(statsGroup, "fps", 364)
-
-petGroup = makeGroup(
-    statsPage,
-    "pet loadout analyzer",
-    10,
-    425,
-    470,
-    180
-)
-
-petStatsText = Instance.new("TextLabel")
-petStatsText.Size = UDim2.fromOffset(450, 150)
-petStatsText.Position = UDim2.fromOffset(10, 25)
-petStatsText.BackgroundTransparency = 1
-petStatsText.TextColor3 = GUI_COLORS.muted
-petStatsText.TextSize = 9
-petStatsText.Font = FONT
-petStatsText.TextXAlignment = Enum.TextXAlignment.Left
-petStatsText.TextYAlignment = Enum.TextYAlignment.Top
-petStatsText.Parent = petGroup
-
-notifyPage = pages.notify
-
-notifyGroup = makeGroup(
-    notifyPage,
-    "notifications",
-    10,
-    10,
-    230,
-    250
-)
-
-makeToggle(
-    notifyGroup,
-    "notifications",
-    8,
-    28,
-    function() return state.notifications end,
-    function(v) state.notifications = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "pet notifications",
-    8,
-    55,
-    function() return state.petNotifications end,
-    function(v) state.petNotifications = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "aura notifications",
-    8,
-    82,
-    function() return state.auraNotifications end,
-    function(v) state.auraNotifications = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "rarity alerts",
-    8,
-    109,
-    function() return state.rarityNotifications end,
-    function(v) state.rarityNotifications = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "basic",
-    8,
-    136,
-    function() return state.rareBasic end,
-    function(v) state.rareBasic = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "rare",
-    8,
-    163,
-    function() return state.rareRare end,
-    function(v) state.rareRare = v end
-)
-
-makeToggle(
-    notifyGroup,
-    "epic",
-    8,
-    190,
-    function() return state.rareEpic end,
-    function(v) state.rareEpic = v end
-)
-
-notifyGroup2 = makeGroup(
-    notifyPage,
-    "rare filters",
-    250,
-    10,
-    230,
-    250
-)
-
-makeToggle(
-    notifyGroup2,
-    "unique",
-    8,
-    28,
-    function() return state.rareUnique end,
-    function(v) state.rareUnique = v end
-)
-
-makeToggle(
-    notifyGroup2,
-    "advanced",
-    8,
-    55,
-    function() return state.rareAdvanced end,
-    function(v) state.rareAdvanced = v end
-)
-
-petSelectionText = Instance.new("TextLabel")
-petSelectionText.Size = UDim2.fromOffset(210, 100)
-petSelectionText.Position = UDim2.fromOffset(8, 88)
-petSelectionText.BackgroundTransparency = 1
-petSelectionText.Text = "Selected pets:\nNone"
-petSelectionText.TextColor3 = GUI_COLORS.muted
-petSelectionText.TextSize = 9
-petSelectionText.Font = FONT
-petSelectionText.TextXAlignment = Enum.TextXAlignment.Left
-petSelectionText.TextYAlignment = Enum.TextYAlignment.Top
-petSelectionText.TextWrapped = true
-petSelectionText.Parent = notifyGroup2
-
-refreshPetListButton = Instance.new("TextButton")
-refreshPetListButton.Size = UDim2.fromOffset(105, 24)
-refreshPetListButton.Position = UDim2.fromOffset(115, 197)
-refreshPetListButton.BackgroundColor3 = GUI_COLORS.panel2
-refreshPetListButton.BorderSizePixel = 1
-refreshPetListButton.BorderColor3 = GUI_COLORS.border
-refreshPetListButton.Text = "PET LIST"
-refreshPetListButton.TextColor3 = GUI_COLORS.text
-refreshPetListButton.TextSize = 9
-refreshPetListButton.Font = FONT
-refreshPetListButton.AutoButtonColor = false
-refreshPetListButton.Parent = notifyGroup2
-
-historyGroup = makeGroup(
-    notifyPage,
-    "notification history",
-    10,
-    270,
-    470,
-    285
-)
-
-historyText = Instance.new("TextLabel")
-historyText.Size = UDim2.fromOffset(450, 245)
-historyText.Position = UDim2.fromOffset(10, 28)
-historyText.BackgroundTransparency = 1
-historyText.TextColor3 = GUI_COLORS.muted
-historyText.TextSize = 9
-historyText.Font = FONT
-historyText.TextXAlignment = Enum.TextXAlignment.Left
-historyText.TextYAlignment = Enum.TextYAlignment.Top
-historyText.TextWrapped = true
-historyText.Parent = historyGroup
-
-crystalGroup = makeGroup(
-    notifyPage,
-    "crystal statistics",
-    10,
-    565,
-    470,
-    110
-)
-
-crystalText = Instance.new("TextLabel")
-crystalText.Size = UDim2.fromOffset(450, 80)
-crystalText.Position = UDim2.fromOffset(10, 25)
-crystalText.BackgroundTransparency = 1
-crystalText.TextColor3 = GUI_COLORS.muted
-crystalText.TextSize = 9
-crystalText.Font = FONT
-crystalText.TextXAlignment = Enum.TextXAlignment.Left
-crystalText.Parent = crystalGroup
-
-espPage = pages.esp
-
-espGroup = makeGroup(
-    espPage,
-    "player esp",
-    10,
-    10,
-    230,
-    285
-)
-
-makeToggle(
-    espGroup,
-    "esp",
-    8,
-    28,
-    function() return state.esp end,
-    function(v) state.esp = v end
-)
-
-makeToggle(
-    espGroup,
-    "boxes",
-    8,
-    55,
-    function() return state.espBoxes end,
-    function(v) state.espBoxes = v end
-)
-
-makeToggle(
-    espGroup,
-    "names",
-    8,
-    82,
-    function() return state.espNames end,
-    function(v) state.espNames = v end
-)
-
-makeToggle(
-    espGroup,
-    "distance",
-    8,
-    109,
-    function() return state.espDistance end,
-    function(v) state.espDistance = v end
-)
-
-makeToggle(
-    espGroup,
-    "health",
-    8,
-    136,
-    function() return state.espHealth end,
-    function(v) state.espHealth = v end
-)
-
-makeToggle(
-    espGroup,
-    "tracers",
-    8,
-    163,
-    function() return state.espTracers end,
-    function(v) state.espTracers = v end
-)
-
-makeToggle(
-    espGroup,
-    "team check",
-    8,
-    190,
-    function() return state.espTeamCheck end,
-    function(v) state.espTeamCheck = v end
-)
-
-makeInput(
-    espGroup,
-    "max distance",
-    8,
-    222,
-    105,
-    state.espMaxDistance,
-    function(value)
-        local n = tonumber(value)
-        if n then
-            state.espMaxDistance = math.max(50, n)
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement then
+            return
         end
-    end
-)
 
-coordsGroup = makeGroup(
-    espPage,
-    "coordinates",
-    250,
-    10,
-    230,
-    285
-)
+        local delta = input.Position - dragStart
 
-makeToggle(
-    coordsGroup,
-    "coordinates",
-    8,
-    28,
-    function() return state.coords end,
-    function(v) state.coords = v end
-)
-
-makeToggle(
-    coordsGroup,
-    "compass",
-    8,
-    55,
-    function() return state.coordsCompass end,
-    function(v) state.coordsCompass = v end
-)
-
-makeToggle(
-    coordsGroup,
-    "heading",
-    8,
-    82,
-    function() return state.coordsHeading end,
-    function(v) state.coordsHeading = v end
-)
-
-makeToggle(
-    coordsGroup,
-    "pitch",
-    8,
-    109,
-    function() return state.coordsPitch end,
-    function(v) state.coordsPitch = v end
-)
-
-spyPage = pages.spy
-
-spyGroup = makeGroup(
-    spyPage,
-    "server spy",
-    10,
-    10,
-    470,
-    230
-)
-
-spyPlayerText = Instance.new("TextButton")
-spyPlayerText.Size = UDim2.fromOffset(220, 27)
-spyPlayerText.Position = UDim2.fromOffset(10, 28)
-spyPlayerText.BackgroundColor3 = GUI_COLORS.panel2
-spyPlayerText.BorderSizePixel = 1
-spyPlayerText.BorderColor3 = GUI_COLORS.border
-spyPlayerText.Text = "select player"
-spyPlayerText.TextColor3 = GUI_COLORS.text
-spyPlayerText.TextSize = 9
-spyPlayerText.Font = FONT
-spyPlayerText.AutoButtonColor = false
-spyPlayerText.Parent = spyGroup
-
-refreshSpy = Instance.new("TextButton")
-refreshSpy.Size = UDim2.fromOffset(100, 27)
-refreshSpy.Position = UDim2.fromOffset(245, 28)
-refreshSpy.BackgroundColor3 = GUI_COLORS.panel2
-refreshSpy.BorderSizePixel = 1
-refreshSpy.BorderColor3 = GUI_COLORS.border
-refreshSpy.Text = "REFRESH"
-refreshSpy.TextColor3 = GUI_COLORS.text
-refreshSpy.TextSize = 9
-refreshSpy.Font = FONT
-refreshSpy.AutoButtonColor = false
-refreshSpy.Parent = spyGroup
-
-makeToggle(
-    spyGroup,
-    "auto refresh",
-    350,
-    28,
-    function() return state.serverSpyAutoRefresh end,
-    function(v) state.serverSpyAutoRefresh = v end,
-    110
-)
-
-spyText = Instance.new("TextLabel")
-spyText.Size = UDim2.fromOffset(450, 155)
-spyText.Position = UDim2.fromOffset(10, 65)
-spyText.BackgroundTransparency = 1
-spyText.Text = "Select a player."
-spyText.TextColor3 = GUI_COLORS.muted
-spyText.TextSize = 9
-spyText.Font = FONT
-spyText.TextXAlignment = Enum.TextXAlignment.Left
-spyText.TextYAlignment = Enum.TextYAlignment.Top
-spyText.Parent = spyGroup
-
-spyList = Instance.new("ScrollingFrame")
-spyList.Size = UDim2.fromOffset(220, 160)
-spyList.Position = UDim2.fromOffset(10, 60)
-spyList.BackgroundColor3 = GUI_COLORS.panel
-spyList.BorderSizePixel = 1
-spyList.BorderColor3 = GUI_COLORS.border
-spyList.Visible = false
-spyList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-spyList.ScrollBarThickness = 3
-spyList.Parent = spyGroup
-
-settingsPage = pages.settings
-
-overlayGroup = makeGroup(
-    settingsPage,
-    "overlays",
-    10,
-    10,
-    230,
-    175
-)
-
-makeToggle(
-    overlayGroup,
-    "automation status",
-    8,
-    28,
-    function() return state.automationOverlay end,
-    function(v) state.automationOverlay = v end
-)
-
-makeToggle(
-    overlayGroup,
-    "performance monitor",
-    8,
-    55,
-    function() return state.performanceOverlay end,
-    function(v) state.performanceOverlay = v end
-)
-
-makeToggle(
-    overlayGroup,
-    "anti afk",
-    8,
-    82,
-    function() return state.antiAFK end,
-    function(v) state.antiAFK = v end
-)
-
-makeToggle(
-    overlayGroup,
-    "mute strength",
-    8,
-    109,
-    function() return state.muteStrength end,
-    function(v) state.muteStrength = v end
-)
-
-makeToggle(
-    overlayGroup,
-    "mute rebirth",
-    8,
-    136,
-    function() return state.muteRebirth end,
-    function(v) state.muteRebirth = v end
-)
-
-goalGroup = makeGroup(
-    settingsPage,
-    "goal",
-    250,
-    10,
-    230,
-    175
-)
-
-goalType = Instance.new("TextButton")
-goalType.Size = UDim2.fromOffset(100, 24)
-goalType.Position = UDim2.fromOffset(8, 30)
-goalType.BackgroundColor3 = GUI_COLORS.panel2
-goalType.BorderSizePixel = 1
-goalType.BorderColor3 = GUI_COLORS.border
-goalType.Text = goal.type
-goalType.TextColor3 = GUI_COLORS.text
-goalType.TextSize = 9
-goalType.Font = FONT
-goalType.AutoButtonColor = false
-goalType.Parent = goalGroup
-
-goalInput = makeInput(
-    goalGroup,
-    "target",
-    120,
-    30,
-    95,
-    goal.target,
-    function(value)
-        local n = tonumber(value)
-        if n then
-            goal.target = n
-        end
-    end
-)
-
-makeToggle(
-    goalGroup,
-    "goal enabled",
-    8,
-    85,
-    function() return goal.enabled end,
-    function(v) goal.enabled = v end
-)
-
-goalProgress = Instance.new("TextLabel")
-goalProgress.Size = UDim2.fromOffset(207, 50)
-goalProgress.Position = UDim2.fromOffset(8, 115)
-goalProgress.BackgroundTransparency = 1
-goalProgress.TextColor3 = GUI_COLORS.muted
-goalProgress.TextSize = 9
-goalProgress.Font = FONT
-goalProgress.TextYAlignment = Enum.TextYAlignment.Top
-goalProgress.Parent = goalGroup
-
-hotkeyGroup = makeGroup(
-    settingsPage,
-    "hotkeys",
-    10,
-    195,
-    470,
-    330
-)
-
-hotkeyScroll = Instance.new("ScrollingFrame")
-hotkeyScroll.Size = UDim2.fromOffset(450, 290)
-hotkeyScroll.Position = UDim2.fromOffset(10, 28)
-hotkeyScroll.BackgroundTransparency = 1
-hotkeyScroll.BorderSizePixel = 0
-hotkeyScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-hotkeyScroll.ScrollBarThickness = 3
-hotkeyScroll.Parent = hotkeyGroup
-
-hotkeyRows = {}
-
-hotkeyNames = {
-    {"autoTrain", "Auto Train"},
-    {"autoRebirth", "Auto Rebirth"},
-    {"rebirthLimit", "Rebirth Limit"},
-    {"autoJungleRock", "Auto Jungle Rock"},
-    {"autoEgg", "Auto Egg"},
-    {"autoUltimates", "Auto Ultimates"},
-    {"autoSize", "Auto Size"},
-    {"autoSpeed", "Auto Speed"},
-    {"skipRebirthAnimation", "Skip Rebirth"},
-    {"antiAFK", "Anti AFK"},
-    {"esp", "ESP"},
-    {"coords", "Coordinates"},
-    {"automationOverlay", "Automation Overlay"},
-    {"performanceOverlay", "Performance Monitor"},
-    {"notifications", "Notifications"},
-}
-
-function keyToText(key)
-    return key and key.Name or "-"
-end
-
-for i, entry in ipairs(hotkeyNames) do
-    local keyName = entry[1]
-    local displayName = entry[2]
-
-    local row = Instance.new("Frame")
-    row.Size = UDim2.fromOffset(430, 27)
-    row.Position = UDim2.fromOffset(0, (i - 1) * 29)
-    row.BackgroundTransparency = 1
-    row.Parent = hotkeyScroll
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.fromOffset(280, 27)
-    label.BackgroundTransparency = 1
-    label.Text = displayName
-    label.TextColor3 = GUI_COLORS.text
-    label.TextSize = 9
-    label.Font = FONT
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local keyButton = Instance.new("TextButton")
-    keyButton.Size = UDim2.fromOffset(100, 23)
-    keyButton.Position = UDim2.fromOffset(290, 2)
-    keyButton.BackgroundColor3 = GUI_COLORS.panel2
-    keyButton.BorderSizePixel = 1
-    keyButton.BorderColor3 = GUI_COLORS.border
-    keyButton.Text = keyToText(hotkeys[keyName])
-    keyButton.TextColor3 = GUI_COLORS.text
-    keyButton.TextSize = 9
-    keyButton.Font = FONT
-    keyButton.AutoButtonColor = false
-    keyButton.Parent = row
-
-    hotkeyRows[keyName] = keyButton
-
-    connect(keyButton.Activated, function()
-        hotkeyCapture = keyName
-        keyButton.Text = "PRESS KEY"
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
     end)
 end
 
-unloadButton = Instance.new("TextButton")
-unloadButton.Size = UDim2.fromOffset(110, 30)
-unloadButton.Position = UDim2.fromOffset(10, 535)
-unloadButton.BackgroundColor3 = GUI_COLORS.danger
-unloadButton.BorderSizePixel = 1
-unloadButton.BorderColor3 = GUI_COLORS.border
-unloadButton.Text = "UNLOAD"
-unloadButton.TextColor3 = GUI_COLORS.text
-unloadButton.TextSize = 9
-unloadButton.Font = FONT
-unloadButton.AutoButtonColor = false
-unloadButton.Parent = settingsPage
+local function buildPages()
+    -- Main
+    local mainPage = addTab("Main")
+    mainPage = pages.Main
 
-coordsOverlay = Instance.new("Frame")
-coordsOverlay.Size = UDim2.fromOffset(250, 120)
-coordsOverlay.Position = UDim2.fromOffset(12, 12)
-coordsOverlay.BackgroundColor3 = GUI_COLORS.panel
-coordsOverlay.BackgroundTransparency = 0.12
-coordsOverlay.BorderSizePixel = 1
-coordsOverlay.BorderColor3 = GUI_COLORS.border
-coordsOverlay.Visible = false
-coordsOverlay.Parent = overlayGui
+    makeSection(mainPage, "sB Hub")
 
-coordsText = Instance.new("TextLabel")
-coordsText.Size = UDim2.fromScale(1, 1)
-coordsText.Position = UDim2.fromOffset(8, 6)
-coordsText.BackgroundTransparency = 1
-coordsText.TextColor3 = GUI_COLORS.text
-coordsText.TextSize = 10
-coordsText.Font = FONT
-coordsText.TextXAlignment = Enum.TextXAlignment.Left
-coordsText.TextYAlignment = Enum.TextYAlignment.Top
-coordsText.Parent = coordsOverlay
+    makeButton(mainPage, "Refresh", function()
+        if Hub and Hub.Stats and Hub.Stats.Refresh then
+            pcall(function()
+                Hub.Stats.Refresh()
+            end)
+        end
+    end)
 
-performanceOverlay = Instance.new("Frame")
-performanceOverlay.Size = UDim2.fromOffset(180, 72)
-performanceOverlay.Position = UDim2.new(1, -192, 1, -84)
-performanceOverlay.BackgroundColor3 = GUI_COLORS.panel
-performanceOverlay.BackgroundTransparency = 0.12
-performanceOverlay.BorderSizePixel = 1
-performanceOverlay.BorderColor3 = GUI_COLORS.border
-performanceOverlay.Visible = false
-performanceOverlay.Parent = overlayGui
+    -- Automation
+    addTab("Automation")
+    local automationPage = pages.Automation
 
-performanceText = Instance.new("TextLabel")
-performanceText.Size = UDim2.fromScale(1, 1)
-performanceText.Position = UDim2.fromOffset(8, 5)
-performanceText.BackgroundTransparency = 1
-performanceText.TextColor3 = GUI_COLORS.text
-performanceText.TextSize = 9
-performanceText.Font = FONT
-performanceText.TextXAlignment = Enum.TextXAlignment.Left
-performanceText.TextYAlignment = Enum.TextYAlignment.Top
-performanceText.Parent = performanceOverlay
+    makeSection(automationPage, "Automation")
 
-automationOverlay = Instance.new("Frame")
-automationOverlay.Size = UDim2.fromOffset(200, 165)
-automationOverlay.Position = UDim2.new(0, 12, 0.5, -80)
-automationOverlay.BackgroundColor3 = GUI_COLORS.panel
-automationOverlay.BackgroundTransparency = 0.12
-automationOverlay.BorderSizePixel = 1
-automationOverlay.BorderColor3 = GUI_COLORS.border
-automationOverlay.Visible = false
-automationOverlay.Parent = overlayGui
+    makeButton(automationPage, "Initialize Automation", function()
+        if Hub and Hub.Automation and Hub.Automation.Start then
+            pcall(function()
+                Hub.Automation.Start()
+            end)
+        end
+    end)
 
-automationOverlayText = Instance.new("TextLabel")
-automationOverlayText.Size = UDim2.fromScale(1, 1)
-automationOverlayText.Position = UDim2.fromOffset(8, 5)
-automationOverlayText.BackgroundTransparency = 1
-automationOverlayText.TextColor3 = GUI_COLORS.text
-automationOverlayText.TextSize = 9
-automationOverlayText.Font = FONT
-automationOverlayText.TextXAlignment = Enum.TextXAlignment.Left
-automationOverlayText.TextYAlignment = Enum.TextYAlignment.Top
-automationOverlayText.Parent = automationOverlay
+    -- ESP
+    addTab("ESP")
+    local espPage = pages.ESP
 
+    makeSection(espPage, "ESP")
+
+    makeToggle(espPage, "Enable ESP", false, function(enabled)
+        if Hub and Hub.ESP then
+            if enabled and Hub.ESP.Enable then
+                pcall(Hub.ESP.Enable)
+            elseif not enabled and Hub.ESP.Disable then
+                pcall(Hub.ESP.Disable)
+            end
+        end
+    end)
+
+    -- Notifications
+    addTab("Notifications")
+    local notificationsPage = pages.Notifications
+
+    makeSection(notificationsPage, "Notifications")
+
+    makeToggle(
+        notificationsPage,
+        "Enable Notifications",
+        true,
+        function(enabled)
+            if Hub and Hub.Notifications then
+                if enabled and Hub.Notifications.Enable then
+                    pcall(Hub.Notifications.Enable)
+                elseif not enabled and Hub.Notifications.Disable then
+                    pcall(Hub.Notifications.Disable)
+                end
+            end
+        end
+    )
+
+    -- Overlays
+    addTab("Overlays")
+    local overlaysPage = pages.Overlays
+
+    makeSection(overlaysPage, "Overlays")
+
+    makeToggle(overlaysPage, "Coordinates", false, function(enabled)
+        if Hub and Hub.Overlays then
+            if enabled and Hub.Overlays.EnableCoordinates then
+                pcall(Hub.Overlays.EnableCoordinates)
+            elseif not enabled and Hub.Overlays.DisableCoordinates then
+                pcall(Hub.Overlays.DisableCoordinates)
+            end
+        end
+    end)
+
+    -- Stats
+    addTab("Stats")
+    local statsPage = pages.Stats
+
+    makeSection(statsPage, "Statistics")
+
+    makeButton(statsPage, "Refresh Statistics", function()
+        if Hub and Hub.Stats and Hub.Stats.Refresh then
+            pcall(Hub.Stats.Refresh)
+        end
+    end)
+
+    -- Spy
+    addTab("Spy")
+    local spyPage = pages.Spy
+
+    makeSection(spyPage, "Player Spy")
+
+    makeButton(spyPage, "Refresh Players", function()
+        if Hub and Hub.Spy and Hub.Spy.Refresh then
+            pcall(Hub.Spy.Refresh)
+        end
+    end)
+end
+
+function UI.Init(hub)
+    Hub = hub
+
+    createBase()
+
+    -- Make absolutely sure these tables exist before any tab loop.
+    tabs = {}
+    pages = {}
+
+    buildPages()
+
+    showTab("Main")
+
+    print("[sB Hub] UI initialized")
+end
+
+function UI.GetGui()
+    return gui
+end
+
+function UI.Show()
+    if gui then
+        gui.Enabled = true
+    end
+end
+
+function UI.Hide()
+    if gui then
+        gui.Enabled = false
+    end
+end
+
+function UI.Toggle()
+    if gui then
+        gui.Enabled = not gui.Enabled
+    end
+end
+
+return UI
