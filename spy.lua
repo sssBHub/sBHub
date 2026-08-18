@@ -1,4 +1,3 @@
-```lua
 -- spy.lua
 -- Clean, crash-safe spy module
 
@@ -123,4 +122,3 @@ function Spy.Destroy()
 end
 
 return Spy
-```
