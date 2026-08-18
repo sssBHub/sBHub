@@ -313,3 +313,4 @@ task.spawn(function()
     end
 end)
 
+return Automation
